@@ -137,7 +137,7 @@ procedure Pipes is
       text_io.put_line ("task writer: wrote" & Global_tally'image);      
       Write(fd,Global_tally'image);
       dummy := Close(fd);
-      delay 0.0; -- force context change
+      delay 0.1; -- force context change
     end loop;
 
   end writer;
