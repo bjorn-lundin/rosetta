@@ -1,45 +1,41 @@
 
 
-with interfaces.c;
-use interfaces;
+with Ada.Exceptions;
+with Interfaces.C;
+use Interfaces;
 
-with text_io;
+with Text_Io;
 
 procedure Pipes is
 
-  pragma Assertion_Policy(check);
+  pragma Assertion_Policy(Check);
 
   type Size_T is new Long_Integer;
   type Mode_T is new Integer;
   type File_Id is new Integer;
   subtype Ssize_T is Size_T;
 
-  Global_tally : Ssize_T := 0;
+  Global_Tally : Ssize_T := 0;
   
-  O_RDWR : aliased c.int := 0;
---  pragma import(C, O_RDWR, "O_RDWR");
-
-  O_WRONLY : aliased c.int := 1;
- -- pragma import(C, O_WRONLY, "O_WRONLY");
-
+  O_RDWR : aliased c.int := 0;   --  pragma import(C, O_RDWR, "O_RDWR");
+  O_WRONLY : aliased c.int := 1; -- pragma import(C, O_WRONLY, "O_WRONLY");
   
   use type C.Int;
   
-  procedure create_fifo(name : string) is
+  procedure Create_Fifo(Name : String) is
     Result : C.Int := -1;   
-    subtype Path_Name_Type is String(name'first..name'last +1);
+    subtype Path_Name_Type is String(Name'first..Name'last +1);
     My_Path : aliased Path_Name_Type := Name & Ascii.Nul;
 
-    function Mkfifo(Path : access Path_Name_Type; Permission : Mode_t) return C.Int;
-    pragma Import(C, mkfifo, "mkfifo");
+    function Mkfifo(Path : access Path_Name_Type; Permission : Mode_T) return C.Int;
+    pragma Import(C, Mkfifo, "mkfifo");
    begin
      Result := Mkfifo(My_Path'access, 8#660# );
-     pragma Assert(Result >= 0, "bad mkfifo:" & Result'Image);
-   end create_fifo;
+   end Create_Fifo;
    -------------------------------
    
-  function Open(name : string; Flags : Interfaces.C.Int) return File_id is
-    subtype Path_Name_Type is String(name'first..name'last +1);
+  function Open(Name : String; Flags : Interfaces.C.Int) return File_Id is
+    subtype Path_Name_Type is String(Name'first..Name'last +1);
     My_Path : aliased Path_Name_Type := Name & Ascii.Nul;
 
     function cOpen(Path  : access Path_Name_Type;
@@ -59,29 +55,26 @@ procedure Pipes is
   function Close( File : File_Id ) return C.Int;
   pragma import( C, Close ,"close" );
   
-  
   ------------------------------------
   
-  subtype message_type is string(1..4096);
+  subtype Message_Type is String(1..4096);
   
-  procedure Read(File : File_Id; Msg : in out Message_Type; len : out Ssize_T) is
+  procedure Read(File : File_Id; Msg : access Message_Type; len : out Ssize_T) is
   
-    Message_Buffer : aliased message_type;
     function cRead(Fd    : File_Id;
-                   Buf   : access message_type;
+                   Buf   : access Message_Type;
                    Count : Size_T ) return Ssize_T;
     pragma import( C, cRead , "read");
   begin
-    Len := cRead(File, Message_Buffer'access, Size_T(message_type'last));
+    Len := cRead(File, Msg, Size_T( Msg'last));
     pragma Assert(Len >= 0, "bad Read:" & Len'image);
-    Msg := Message_Buffer;
   end Read;
     
   ------------------------------
 
-  procedure Write(File : File_Id; Msg : in string) is
+  procedure Write(File : File_Id; Msg : in String) is
   
-    subtype Value_Type is String(msg'first..msg'last +1);
+    subtype Value_Type is String(Msg'first..Msg'last +1);
     My_Value : aliased Value_Type := Msg & Ascii.Nul;
 
     function cWrite( Fd    : File_Id;
@@ -96,67 +89,72 @@ procedure Pipes is
     
   -------------------------------
 
-  procedure read_loop is
-    fd : file_id;
-    buf : message_type;
-    len : Ssize_T;
-    dummy : c.int  ;
+  procedure Read_Loop is
+    Fd  : File_Id;
+    Buf : aliased Message_Type;
+    Len : Ssize_T;
+    Dummy : C.Int;
   begin
     outer : loop
-      text_io.put_line ("read_loop-outer: before open");
-      fd := open("in_pipe", O_RDWR);
+      Text_Io.Put_Line ("read_loop-outer: before open");
+      Fd := Open("in_pipe", O_RDWR);
       inner : loop
-        text_io.put_line ("read_loop-inner: before read");
-        read(fd, buf, len);
-        text_io.put_line ("read_loop-inner: read" & len'img & " bytes '" & buf(1..integer(len)) & "'");
-        exit inner when len = 0;
-        Global_tally := Global_tally + len;
+        Text_Io.Put_Line ("read_loop-inner: before read");
+        Read(Fd, Buf'access, Len);
+        Text_Io.Put_Line ("read_loop-inner: read" & Len'img & 
+                          " bytes '" & Buf(1..Integer(len)) & "'");
+        exit inner when Len = 0;
+        Global_Tally := Global_Tally + Len;
       end loop inner;
-      text_io.put_line ("read_loop-outer:  before close");      
-      dummy := close(fd);
+      Text_Io.Put_Line ("read_loop-outer:  before close");      
+      Dummy := Close(Fd);
     end loop outer;
-  end read_loop;
+  end Read_Loop;
   ------------------------------
   
-  task writer is
-    entry start;
-  end writer;
+  task Writer is
+    entry Start;
+  end Writer;
 
-  task body writer is
-    fd : file_id;
-    dummy : c.int;
+  task body Writer is
+    Fd : File_Id;
+    Dummy : C.Int;
   begin
-    text_io.put_line ("task writer: wait for start");      
+    Text_Io.Put_Line ("task writer: wait for start");      
 
-    accept start; -- wait here until called. Rendez-vouz is done here
-    text_io.put_line ("task writer: start called");      
+    accept Start; -- wait here until called. Rendez-vouz is done here
+    Text_Io.Put_Line ("task writer: start called");      
     
     loop
-      text_io.put_line ("task writer-loop: wait for open call by others");      
-      fd := open("out_pipe", O_WRONLY);  -- block open, until a reader comes along
-      text_io.put_line ("task writer: wrote" & Global_tally'image);      
-      Write(fd,Global_tally'image);
+      Text_Io.Put_Line ("task writer-loop: wait for open call by others");      
+      Fd := Open("out_pipe", O_WRONLY);  -- block open, until a reader comes along
+      Text_Io.Put_Line ("task writer: wrote" & Global_Tally'image);      
+      Write(fd,Global_Tally'image);
       dummy := Close(fd);
-      delay 0.1; -- force context change
+      delay 0.01; -- force context change
     end loop;
 
-  end writer;
+  end Writer;
   ---------------------------------
   
 begin
-    -- haphazardly create the fifos.  It's ok if the fifos already exist,
-    --   but things won't work out if the files exist but are not fifos;
-    --   if we don't have write permission; if we are on NFS; etc.  Just
-    --   pretend it works.
+  -- Create the fifos.  It's NOT ok if the fifos already exist;
+  Create_Fifo("in_pipe");
+  Create_Fifo("out_pipe");
 
-  create_fifo("in_pipe");
-  create_fifo("out_pipe");
+  Writer.Start;
+  Read_Loop;
+exception    
+  when E: others =>
+    declare
+      Last_Exception_Name     : constant String := Ada.Exceptions.Exception_Name(E);
+      Last_Exception_Messsage : constant String := Ada.Exceptions.Exception_Message(E);
+    begin
+      Text_Io.Put_Line ("Last_Exception_Name: " & Last_Exception_Name);
+      Text_Io.Put_Line ("Last_Exception_Messsage: " & Last_Exception_Messsage);
+    end;
 
-  writer.start;
-  read_loop;
-    
 end Pipes;
-
 
 
 
